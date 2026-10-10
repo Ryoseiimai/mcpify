@@ -51,6 +51,22 @@ class LocalAddressBlocked(RuntimeError):
     """A spec URL resolved to an address on the machine's own networks."""
 
 
+class UnsafeOperationPath(RuntimeError):
+    """A `paths` key in the spec is not a safe URL path template.
+
+    emit_mcp.py and emit_cli.py build each request URL by string-concatenating
+    BASE_URL with this path (`BASE_URL.rstrip('/') + path`). A path that does
+    not start with "/", or that contains "@" or "//", can turn that
+    concatenation into a URL whose host is a different, attacker-chosen one
+    (e.g. path "@evil.example/steal" turns "https://api.example.com" + path
+    into "https://api.example.com@evil.example/steal", whose host is
+    evil.example) — silently redirecting credentials there even when the
+    caller passed --base-url. Rejecting the shape here, at parse time, keeps
+    both generated channels safe without having to duplicate a runtime check
+    in each one.
+    """
+
+
 def _resolved_addresses(host: str):
     try:
         infos = socket.getaddrinfo(host, None)
@@ -154,6 +170,7 @@ def normalize(raw: dict) -> Spec:
     for path, path_item in paths.items():
         if not isinstance(path_item, dict):
             continue
+        _check_operation_path(path)
         path_level_params = path_item.get("parameters") or []
         for method in HTTP_METHODS:
             op = path_item.get(method)
@@ -162,6 +179,19 @@ def normalize(raw: dict) -> Spec:
             operations.append(_build_op(method, path, op, path_level_params))
     return Spec(title=title, version=version, base_url=base_url,
                 operations=operations, raw=raw)
+
+
+def _check_operation_path(path: str) -> None:
+    """Reject a `paths` key that could smuggle a different host past BASE_URL.
+
+    See UnsafeOperationPath for why "/" + no "@"/"//" is the safe shape.
+    """
+    if (not isinstance(path, str) or not path.startswith("/")
+            or "@" in path or "//" in path):
+        raise UnsafeOperationPath(
+            f"paths key {path!r} is not a safe URL path template "
+            f"(must start with \"/\" and must not contain \"@\" or \"//\")."
+        )
 
 
 def _build_op(method: str, path: str, op: dict, path_params: list) -> Operation:
