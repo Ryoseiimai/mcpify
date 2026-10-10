@@ -39,7 +39,11 @@ def main(argv: list = None) -> int:
     except openapi.LocalAddressBlocked as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
-    spec = openapi.normalize(raw)
+    try:
+        spec = openapi.normalize(raw)
+    except openapi.UnsafeOperationPath as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
     if not spec.operations:
         print("ERROR: no operations found in the OpenAPI document.", file=sys.stderr)
         return 2
